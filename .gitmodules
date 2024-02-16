@@ -1,0 +1,3 @@
+[submodule "AlphaCodium"]
+	path = AlphaCodium
+	url = git@github.com:Codium-ai/AlphaCodium.git
