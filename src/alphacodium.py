@@ -351,7 +351,9 @@ def clean_code(code: str) -> str:
 
 def run_test(code: str, test: TestCase) -> TestExecutionSuccess | TestExecutionFailure:
     # TODO: Make this installable instead?
-    sys.path.append(str(Path(__file__).parent.parent / "AlphaCodium"))
+    alpha_codium_path = str(Path(__file__).parent.parent / "AlphaCodium")
+    if alpha_codium_path not in sys.path:
+        sys.path.append(alpha_codium_path)
     from alpha_codium.gen.stages.run_tests import (
         run_tests as run_tests_alphacodium_contrib,
     )
