@@ -5,10 +5,11 @@ import zipfile
 
 import dspy
 import typer
-from huggingface_hub import snapshot_download
-
+from datasets import Dataset
 from datasets import DatasetDict
 from datasets import load_from_disk
+from dspy.teleprompt import BootstrapFewShotWithRandomSearch
+from huggingface_hub import snapshot_download
 
 from .alphacodium import AlphaCodium
 from .alphacodium import TestCase
@@ -17,9 +18,10 @@ from .alphacodium import run_test
 
 # TODO:
 # - Create some tooling to inspect the history of what actually gets sent to the LLM.
-# - Use the dspy compile features to improve prompts.
+# - Evaluate before and after optimizing with dspy compile features.
 # - Increase max_tokens?
 # - Some examples don't seem to have any private tests?
+# - Running into problems with context length with openai when optimizing.
 
 
 def main():
@@ -32,40 +34,29 @@ def main():
     dspy.settings.configure(lm=llm)
 
     ds = load_dataset()
-    ds = ds["test"]
+    train_set = make_examples(ds["valid"].select(range(10)))
+    test_set = make_examples(ds["test"].select(range(10)), include_private_tests=True)
 
-    problem_index = 69
-    problem_description = ds[problem_index]["description"]
-    public_tests_original = ds[problem_index]["public_tests"]
-    private_tests_original = ds[problem_index]["private_tests"]
-
-    public_tests = []
-    assert len(public_tests_original["input"]) == len(public_tests_original["output"])
-    for test_input, test_output in zip(
-        public_tests_original["input"], public_tests_original["output"]
-    ):
-        public_tests.append(TestCase(input=test_input, output=test_output))
-
-    alphacodium = AlphaCodium()
-    code = alphacodium(
-        problem_description=problem_description,
-        public_tests=public_tests,
+    optimizer = BootstrapFewShotWithRandomSearch(
+        metric=evaluate_code_metric,
+        max_bootstrapped_demos=3,
+        max_labeled_demos=3,
+        num_candidate_programs=10,
+        num_threads=4,
     )
 
-    private_tests = []
-    assert len(private_tests_original["input"]) == len(private_tests_original["output"])
-    for test_input, test_output in zip(
-        private_tests_original["input"], private_tests_original["output"]
-    ):
-        private_tests.append(TestCase(input=test_input, output=test_output))
+    alphacodium = AlphaCodium()
+    alphacodium_optimized = optimizer.compile(alphacodium, trainset=train_set)
 
-    # TODO: It kind of sucks:)
-    for i, test in enumerate(private_tests):
-        res = run_test(code, test)
-        if isinstance(res, TestExecutionSuccess):
-            print(f"Test {i} passed")
-        else:
-            print(f"Test {i} failed\n{res.error_str}\n")
+    for example in test_set:
+        code = alphacodium_optimized(**example.without("private_tests"))
+        for test in example.private_tests:
+            res = run_test(code, test)
+            if isinstance(res, TestExecutionSuccess):
+                print("Test passed")
+            else:
+                print(f"Test failed\n{res.error_str}\n")
+        print("=" * 80)
 
     breakpoint()
 
@@ -93,6 +84,41 @@ def load_dataset() -> DatasetDict:
     shutil.rmtree(extract_path)
 
     return ds
+
+
+def make_examples(ds: Dataset, include_private_tests: bool = False) -> list[dspy.Example]:
+    examples = []
+    for x in ds:
+        if include_private_tests:
+            example = dspy.Example(
+                problem_description=x["description"],  # type: ignore
+                public_tests=make_tests(x["public_tests"]),  # type: ignore
+                private_tests=make_tests(x["private_tests"]),  # type: ignore
+            ).with_inputs("problem_description", "public_tests", "private_tests")
+        else:
+            example = dspy.Example(
+                problem_description=x["description"],  # type: ignore
+                public_tests=make_tests(x["public_tests"]),  # type: ignore
+            ).with_inputs("problem_description", "public_tests")
+        examples.append(example)
+    return examples
+
+
+def make_tests(tests_dict: dict[str, list[str]]) -> list[TestCase]:
+    tests = []
+    assert len(tests_dict["input"]) == len(tests_dict["output"])
+    for test_input, test_output in zip(tests_dict["input"], tests_dict["output"]):
+        tests.append(TestCase(input=test_input, output=test_output))
+    return tests
+
+
+def evaluate_code_metric(
+    example: dspy.Example, pred: dict[str, str], trace: str | None = None
+) -> float:
+    # TODO: Should this just test whether all tests are passing instead?
+    predicted_code = pred["code"]
+    results = [run_test(predicted_code, test) for test in example.public_tests]
+    return sum([1 for res in results if isinstance(res, TestExecutionSuccess)]) / len(results)
 
 
 if __name__ == "__main__":

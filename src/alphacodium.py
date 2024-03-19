@@ -14,6 +14,8 @@ from pydantic import Field
 # - Include the validation steps mentioned in the paper too?
 # - I think dspy uses json encoding when using pydantic classes, but the paper makes arguments
 #   for using yaml. Maybe we should use yaml instead? Can we?
+# - Consider adding more constraints to the output types of the signatures, i.e. in the Field
+# - How to add demonstrations for different submodules?
 
 logger = logger.opt(colors=True)
 
@@ -121,7 +123,7 @@ class AlphaCodium(dspy.Module):
         self,
         problem_description: str,
         public_tests: list[TestCase],
-    ) -> str:
+    ) -> dict[str, str]:
         logger.info("Starting AlphaCodium pipeline")
 
         logger.info("Running problem reflection")
@@ -263,7 +265,8 @@ class AlphaCodium(dspy.Module):
                 code = fixed_code
                 test_anchors.append(test)
 
-        return code
+        # TODO: Without a dict it fails in the optimization code, doesn't seem intended though.
+        return {"code": code}
 
     def initial_code_generation(
         self,
