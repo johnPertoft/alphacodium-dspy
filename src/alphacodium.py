@@ -383,16 +383,21 @@ def run_test(code: str, test: TestCase) -> TestExecutionSuccess | TestExecutionF
         test_outputs=[test.output],
     )
 
+    if all_passed:
+        return TestExecutionSuccess()
+
     # TODO: Should we add something to the error_str in the case of wrong output?
     # I guess it's sort of clear because it says "expected_output" etc.
     # How do we know that was the problem though and not just a crash/timeout?
 
-    if tests_timeout:
-        # TODO: What does the error_str look like in this case?
-        breakpoint()
+    # TODO: Should we use the trace_str in some manner as well? The paper talks about it
+    # but that it didn't improve the performance.
 
-    if all_passed:
-        return TestExecutionSuccess()
+    if tests_timeout:
+        # TODO:
+        # - Seems like the error_str is not set in this case?
+        # - Maybe tune this message a bit.
+        error_str = "TimeoutError: Tests timed out."
 
     return TestExecutionFailure(
         error_str=error_str,

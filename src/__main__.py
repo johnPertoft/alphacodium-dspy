@@ -34,31 +34,37 @@ def main():
     dspy.settings.configure(lm=llm)
 
     ds = load_dataset()
-    train_set = make_examples(ds["valid"].select(range(10)))
-    test_set = make_examples(ds["test"].select(range(10)), include_private_tests=True)
+    ds_train = ds["valid"].select(range(10))
+    ds_test = ds["test"].select(range(10))
+    train_set = make_examples(ds_train)
+    test_set = make_examples(ds_test, include_private_tests=True)
 
     optimizer = BootstrapFewShotWithRandomSearch(
         metric=evaluate_code_metric,
         max_bootstrapped_demos=3,
         max_labeled_demos=3,
-        num_candidate_programs=10,
+        num_candidate_programs=5,
         num_threads=1,  # 4
     )
 
     alphacodium = AlphaCodium()
     alphacodium_optimized = optimizer.compile(alphacodium, trainset=train_set)
 
+    scores = []
     for example in test_set:
-        code = alphacodium_optimized(**example.without("private_tests"))
+        if not example.private_tests:
+            continue
+
+        pred = alphacodium_optimized(**example.without("private_tests"))
+        code = pred["code"]
+        n_passing = 0
         for test in example.private_tests:
             res = run_test(code, test)
             if isinstance(res, TestExecutionSuccess):
-                print("Test passed")
-            else:
-                print(f"Test failed\n{res.error_str}\n")
-        print("=" * 80)
+                n_passing += 1
+        scores.append(n_passing / len(example.private_tests))
 
-    breakpoint()
+    print(f"Avg score: {sum(scores) / len(scores)}")
 
 
 def load_dataset() -> DatasetDict:
